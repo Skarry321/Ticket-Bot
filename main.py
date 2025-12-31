@@ -1,19 +1,20 @@
 import discord
 from discord.ext import commands
-from discord.ui import Button, View, Modal, TextInput
+from discord.ui import Button, View, Modal, TextInput, Select
 import os
 import json
 import time
 from flask import Flask
 from threading import Thread
 import datetime
+import asyncio
 
 # ==================== КОНФИГУРАЦИЯ ====================
 TOKEN = os.getenv('DISCORD_TOKEN')
-SUPPORT_ROLES = ["Admin", "Support", "Модератор"]  # Роли которые видят ВСЕ тикеты
-COOLDOWN_TIME = 600  # 10 минут в секундах
+SUPPORT_ROLES = ["Admin", "Support", "Модератор"]
+COOLDOWN_TIME = 600
 
-# ==================== БАЗА ДАННЫХ ДЛЯ КД ====================
+# ==================== БАЗА ДАННЫХ ====================
 COOLDOWN_FILE = "cooldowns.json"
 
 def load_cooldowns():
@@ -63,7 +64,6 @@ bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)
 
 # ==================== ПРОВЕРКИ ПРАВ ====================
 def is_support(member):
-    """Проверяет есть ли у пользователя права поддержки"""
     if member.guild_permissions.administrator:
         return True
     for role_name in SUPPORT_ROLES:
@@ -96,7 +96,6 @@ class TicketModal(Modal, title="📝 Создание тикета"):
         self.add_item(self.description)
     
     async def on_submit(self, interaction: discord.Interaction):
-        # Проверка КД для обычных пользователей
         if not is_support(interaction.user):
             cooldown_left = check_cooldown(interaction.user.id)
             if cooldown_left > 0:
@@ -126,6 +125,40 @@ class TicketTypeView(View):
         modal = TicketModal("idea")
         await interaction.response.send_modal(modal)
 
+# ==================== ВЫБОР УЧАСТНИКА ДЛЯ ДОБАВЛЕНИЯ ====================
+class AddUserSelect(Select):
+    def __init__(self, members):
+        options = []
+        for member in members[:25]:  # Максимум 25 опций
+            if not member.bot:
+                options.append(discord.SelectOption(
+                    label=member.name,
+                    value=str(member.id),
+                    description=f"Добавить {member.name} в тикет"
+                ))
+        
+        super().__init__(
+            placeholder="Выберите участника для добавления...",
+            min_values=1,
+            max_values=1,
+            options=options
+        )
+    
+    async def callback(self, interaction: discord.Interaction):
+        member_id = int(self.values[0])
+        member = interaction.guild.get_member(member_id)
+        
+        if member:
+            await interaction.channel.set_permissions(member, view_channel=True, send_messages=True)
+            await interaction.response.send_message(f"✅ {member.mention} добавлен в тикет!", ephemeral=True)
+        else:
+            await interaction.response.send_message("❌ Участник не найден", ephemeral=True)
+
+class AddUserView(View):
+    def __init__(self, members):
+        super().__init__(timeout=60)
+        self.add_item(AddUserSelect(members))
+
 # ==================== КНОПКИ УПРАВЛЕНИЯ ТИКЕТОМ ====================
 class TicketControlView(View):
     def __init__(self, channel_id, creator_id):
@@ -144,9 +177,9 @@ class TicketControlView(View):
             description="Канал удалится через 5 секунд...",
             color=discord.Color.red()
         )
-        await interaction.response.send_message(embed=embed)
-        
-        await interaction.channel.delete(reason=f"Тикет закрыт {interaction.user}")
+        msg = await interaction.response.send_message(embed=embed)
+        await asyncio.sleep(5)
+        await interaction.channel.delete()
     
     @discord.ui.button(label="👥 Добавить", style=discord.ButtonStyle.blurple, emoji="👥", custom_id="add_user")
     async def add_user(self, interaction: discord.Interaction, button: Button):
@@ -154,9 +187,40 @@ class TicketControlView(View):
             await interaction.response.send_message("❌ У вас нет прав для добавления участников!", ephemeral=True)
             return
         
-        await interaction.response.send_message("📝 Ответьте на это сообщение, упомянув пользователя: `@username`", ephemeral=True)
+        # Получаем список участников сервера (кроме ботов)
+        members = [member for member in interaction.guild.members if not member.bot]
+        
+        if len(members) == 0:
+            await interaction.response.send_message("❌ Нет участников для добавления", ephemeral=True)
+            return
+        
+        # Создаем View с выбором участника
+        view = AddUserView(members)
+        await interaction.response.send_message("👥 Выберите участника для добавления:", view=view, ephemeral=True)
+    
+    @discord.ui.button(label="✅ Решено", style=discord.ButtonStyle.green, emoji="✅", custom_id="solved")
+    async def mark_solved(self, interaction: discord.Interaction, button: Button):
+        if not is_support(interaction.user):
+            await interaction.response.send_message("❌ У вас нет прав для отметки решенных тикетов!", ephemeral=True)
+            return
+        
+        # Находим первое embed сообщение в канале
+        async for message in interaction.channel.history(limit=20, oldest_first=True):
+            if message.embeds:
+                embed = message.embeds[0]
+                embed.color = discord.Color.green()
+                if len(embed.fields) < 5:  # Добавляем поле "Решено" если его нет
+                    embed.add_field(
+                        name="✅ Решено",
+                        value=f"<t:{int(time.time())}:R> | {interaction.user.mention}",
+                        inline=False
+                    )
+                await message.edit(embed=embed)
+                break
+        
+        await interaction.response.send_message("✅ Тикет отмечен как решенный!", ephemeral=True)
 
-# ==================== ОСНОВНАЯ ФУНКЦИЯ СОЗДАНИЯ ТИКЕТА ====================
+# ==================== ФУНКЦИЯ СОЗДАНИЯ ТИКЕТА ====================
 async def create_ticket_channel(interaction, ticket_type, title, description):
     """Создает канал для тикета"""
     
@@ -173,22 +237,34 @@ async def create_ticket_channel(interaction, ticket_type, title, description):
     # Создаем название канала
     user_name = interaction.user.name.replace(" ", "-").lower()[:10]
     clean_title = "".join(c for c in title if c.isalnum() or c in "-_ ").replace(" ", "-")[:30]
-    channel_name = f"{user_name}-{clean_title}".lower()
+    channel_name = f"{'🚨' if ticket_type == 'problem' else '💡'}-{user_name}-{clean_title}".lower()
     
     # Настраиваем права доступа
     overwrites = {
         interaction.guild.default_role: discord.PermissionOverwrite(view_channel=False),
-        interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True),
+        interaction.user: discord.PermissionOverwrite(
+            view_channel=True, 
+            send_messages=True, 
+            read_message_history=True,
+            attach_files=True
+        ),
+        interaction.guild.me: discord.PermissionOverwrite(
+            view_channel=True,
+            send_messages=True,
+            manage_messages=True,
+            manage_channels=True
+        )
     }
     
-    # Добавляем права для всех Support/Admin ролей
+    # Добавляем права для всех Support/Admin
     for member in interaction.guild.members:
         if is_support(member):
             overwrites[member] = discord.PermissionOverwrite(
                 view_channel=True, 
                 send_messages=True, 
                 manage_messages=True,
-                manage_channels=True
+                manage_channels=True,
+                attach_files=True
             )
     
     # Создаем канал
@@ -196,7 +272,7 @@ async def create_ticket_channel(interaction, ticket_type, title, description):
         ticket_channel = await category.create_text_channel(
             name=channel_name,
             overwrites=overwrites,
-            topic=f"{'🚨' if ticket_type == 'problem' else '💡'} {title} | Автор: {interaction.user}"
+            topic=f"{'🚨' if ticket_type == 'problem' else '💡'} | {title} | Автор: {interaction.user}"
         )
     except Exception as e:
         await interaction.followup.send(f"❌ Ошибка при создании канала: {e}", ephemeral=True)
@@ -283,8 +359,15 @@ async def setup_panel(ctx):
     
     if not category:
         category = await ctx.guild.create_category("🎫 ТИКЕТЫ", position=0)
+        # Настраиваем права категории (только чтение для всех)
+        await category.set_permissions(
+            ctx.guild.default_role,
+            view_channel=True,
+            send_messages=False,
+            add_reactions=False
+        )
     
-    # Создаем канал для панели
+    # Создаем или находим канал для панели
     panel_channel = None
     for channel in category.text_channels:
         if "панель" in channel.name.lower():
@@ -292,12 +375,47 @@ async def setup_panel(ctx):
             break
     
     if not panel_channel:
+        # Создаем канал с правами ТОЛЬКО НА ЧТЕНИЕ
+        overwrites = {
+            ctx.guild.default_role: discord.PermissionOverwrite(
+                view_channel=True,
+                send_messages=False,
+                add_reactions=False,
+                send_tts_messages=False,
+                attach_files=False
+            ),
+            ctx.guild.me: discord.PermissionOverwrite(
+                view_channel=True,
+                send_messages=True,
+                manage_messages=True,
+                manage_channels=True
+            )
+        }
+        
+        # Даем права админам
+        for member in ctx.guild.members:
+            if member.guild_permissions.administrator:
+                overwrites[member] = discord.PermissionOverwrite(
+                    view_channel=True,
+                    send_messages=True,
+                    manage_messages=True
+                )
+        
         panel_channel = await category.create_text_channel(
             name="📝-панель-тикетов",
-            topic="Панель для создания тикетов"
+            topic="Панель для создания тикетов | Не писать здесь!",
+            overwrites=overwrites
+        )
+    else:
+        # Обновляем права существующего канала
+        await panel_channel.set_permissions(
+            ctx.guild.default_role,
+            view_channel=True,
+            send_messages=False,
+            add_reactions=False
         )
     
-    # Очищаем канал
+    # Очищаем ВСЕ сообщения в канале
     try:
         await panel_channel.purge(limit=100)
     except:
@@ -305,26 +423,32 @@ async def setup_panel(ctx):
     
     # Создаем embed панели
     embed = discord.Embed(
-        title="🎫 Система тикетов",
-        description="Выберите тип тикета:",
+        title="🎫 СИСТЕМА ТИКЕТОВ",
+        description="Выберите тип тикета, нажав на кнопку ниже:",
         color=discord.Color.blue()
     )
     
     embed.add_field(
-        name="🚨 Проблема",
-        value="• Баги, ошибки, неполадки\n• Технические проблемы\n• Что-то не работает",
+        name="🚨 ПРОБЛЕМА",
+        value="• Баги и ошибки\n• Технические неполадки\n• Что-то не работает",
+        inline=True
+    )
+    
+    embed.add_field(
+        name="💡 ИДЕЯ / ПРЕДЛОЖЕНИЕ",
+        value="• Новые функции\n• Улучшения\n• Предложения",
+        inline=True
+    )
+    
+    embed.add_field(
+        name="📋 ПРАВИЛА",
+        value="• 1 тикет = 1 проблема\n• Опишите четко\n• КД: 10 минут\n• Будьте вежливы",
         inline=False
     )
     
     embed.add_field(
-        name="💡 Идея / Предложение",
-        value="• Новые функции\n• Улучшения\n• Предложения по развитию",
-        inline=False
-    )
-    
-    embed.add_field(
-        name="📋 Правила",
-        value="• Опишите проблему четко\n• Будьте вежливы\n• Один тикет - одна проблема\n• КД между тикетами: 10 минут",
+        name="⚙️ КАК РАБОТАЕТ",
+        value="1. Нажмите кнопку\n2. Заполните форму\n3. Создастся приватный канал\n4. Support ответит там",
         inline=False
     )
     
@@ -332,10 +456,49 @@ async def setup_panel(ctx):
     
     # Отправляем панель с кнопками
     view = TicketTypeView()
-    await panel_channel.send(embed=embed, view=view)
+    message = await panel_channel.send(embed=embed, view=view)
+    
+    # Закрепляем сообщение
+    try:
+        await message.pin()
+    except:
+        pass
+    
+    # Удаляем все другие сообщения (на случай если что-то осталось)
+    await asyncio.sleep(2)
+    try:
+        async for msg in panel_channel.history(limit=50):
+            if msg.id != message.id:
+                await msg.delete()
+    except:
+        pass
     
     await ctx.message.delete()
     await ctx.send(f"✅ Панель создана в {panel_channel.mention}", delete_after=5)
+
+@bot.event
+async def on_message(message):
+    # Авто-удаление сообщений в канале панели (кроме сообщений бота)
+    if message.channel.name.lower() == "📝-панель-тикетов" and not message.author.bot:
+        try:
+            await message.delete()
+            
+            # Отправляем предупреждение в ЛС если это не админ
+            if not message.author.guild_permissions.administrator:
+                try:
+                    warning = discord.Embed(
+                        title="⚠️ ВНИМАНИЕ",
+                        description=f"В канале {message.channel.mention} нельзя писать сообщения!\nИспользуйте кнопки для создания тикетов.",
+                        color=discord.Color.orange()
+                    )
+                    await message.author.send(embed=warning)
+                except:
+                    pass
+        except:
+            pass
+    
+    # Пропускаем команды бота
+    await bot.process_commands(message)
 
 @bot.command(name="пинг")
 async def ping(ctx):
@@ -362,23 +525,6 @@ async def check_cooldown_cmd(ctx):
     else:
         await ctx.send("✅ Вы можете создать тикет сейчас!")
 
-@bot.command(name="тикет")
-async def create_ticket_cmd(ctx, *, title=None):
-    """Создать тикет через команду (альтернатива кнопкам)"""
-    if not title:
-        await ctx.send("❌ Используйте: `!тикет [описание]`")
-        return
-    
-    if not is_support(ctx.author):
-        cooldown_left = check_cooldown(ctx.author.id)
-        if cooldown_left > 0:
-            minutes = int(cooldown_left // 60)
-            await ctx.send(f"⏳ Вы можете создать тикет через {minutes} минут")
-            return
-    
-    await create_ticket_channel(ctx, "problem", title, "Создано через команду")
-    await ctx.message.delete()
-
 @bot.command(name="добавить")
 async def add_to_ticket(ctx, member: discord.Member):
     """Добавить участника в тикет (только Support)"""
@@ -397,7 +543,6 @@ async def close_ticket(ctx):
         await ctx.send("❌ Эта команда работает только в тикетах!")
         return
     
-    # Находим создателя тикета (первое упоминание в теме)
     creator_id = None
     if channel.topic:
         for part in channel.topic.split():
@@ -418,7 +563,34 @@ async def close_ticket(ctx):
         color=discord.Color.red()
     )
     await ctx.send(embed=embed)
+    await asyncio.sleep(5)
     await channel.delete()
+
+@bot.command(name="очистить")
+@commands.has_permissions(administrator=True)
+async def clear_panel(ctx):
+    """Очистить панель тикетов"""
+    for channel in ctx.guild.text_channels:
+        if "панель" in channel.name.lower() and "тикет" in channel.category.name.lower():
+            try:
+                await channel.purge(limit=100)
+                embed = discord.Embed(
+                    title="🎫 СИСТЕМА ТИКЕТОВ",
+                    description="Выберите тип тикета, нажав на кнопку ниже:",
+                    color=discord.Color.blue()
+                )
+                embed.add_field(name="🚨 ПРОБЛЕМА", value="Баги и ошибки", inline=True)
+                embed.add_field(name="💡 ИДЕЯ", value="Предложения", inline=True)
+                embed.set_footer(text="Бот создан Skarry")
+                
+                view = TicketTypeView()
+                message = await channel.send(embed=embed, view=view)
+                await message.pin()
+                
+                await ctx.send(f"✅ Панель в {channel.mention} очищена", delete_after=5)
+            except Exception as e:
+                await ctx.send(f"❌ Ошибка: {e}")
+            break
 
 # ==================== ЗАПУСК БОТА ====================
 if __name__ == "__main__":
