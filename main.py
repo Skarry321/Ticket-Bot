@@ -8,6 +8,7 @@ from flask import Flask
 from threading import Thread
 import datetime
 import asyncio
+import traceback
 
 # ==================== КОНФИГУРАЦИЯ ====================
 TOKEN = os.getenv('DISCORD_TOKEN')
@@ -100,10 +101,6 @@ class Emojis:
     STAFF = "🛡️"
     SETTINGS = "⚙️"
     ROBOT = "🤖"
-    EMAIL = "📧"
-    GAME = "🎮"
-    SUBSCRIBE = "👥"
-    LINK = "🔗"
 
 # ==================== ФУНКЦИЯ СОЗДАНИЯ СТРУКТУРЫ ====================
 async def auto_setup(guild):
@@ -139,21 +136,30 @@ async def auto_setup(guild):
 
 # ==================== МОДАЛЬНОЕ ОКНО ТИКЕТА ====================
 class TicketModal(Modal):
-    def __init__(self, ticket_type, title_placeholder, description_placeholder, description_label="📖 ПОДРОБНОЕ ОПИСАНИЕ"):
+    def __init__(self, ticket_type):
         # Устанавливаем красивое название
         if ticket_type == "problem":
             title_text = f"{Emojis.PROBLEM} СОЗДАНИЕ ПРОБЛЕМЫ"
             color = Colors.PROBLEM
+            title_placeholder = "Кратко опишите проблему..."
+            description_placeholder = "• Что именно произошло?\n• Когда началось?\n• Как это влияет на игру?\n• Прикрепите скриншоты если есть"
+            description_label = "📖 ПОДРОБНОЕ ОПИСАНИЕ"
         elif ticket_type == "idea":
             title_text = f"{Emojis.IDEA} СОЗДАНИЕ ИДЕИ"
             color = Colors.IDEA
+            title_placeholder = "Название идеи..."
+            description_placeholder = "• В чем суть идеи?\n• Какую проблему решает?\n• Какие преимущества?\n• Возможная реализация"
+            description_label = "📖 ОПИСАНИЕ ИДЕИ"
         else:  # youtube
             title_text = f"{Emojis.YOUTUBE} ЗАПРОС ДЛЯ YOUTUBE"
             color = Colors.YOUTUBE
+            title_placeholder = "Тема видео или коллаборации..."
+            description_placeholder = "📺 Информация о канале:\n• Ссылка на YouTube канал\n• Количество подписчиков\n• Основная тематика\n\n🎮 Информация об игре:\n• Ваш ник в игре\n• Уровень/ранг\n• Часов в игре\n\n🤝 Предложение:\n• Тип сотрудничества\n• Идея для видео\n• Контакт для связи"
+            description_label = "📋 ПОДРОБНАЯ ИНФОРМАЦИЯ"
         
-        super().__init__(title=title_text, timeout=600)
+        super().__init__(title=title_text, timeout=None)  # Убрали таймаут
         
-        # Красивые поля
+        # Поле названия
         self.title_input = TextInput(
             label="📝 НАЗВАНИЕ / ТЕМА",
             placeholder=title_placeholder,
@@ -162,6 +168,7 @@ class TicketModal(Modal):
             style=discord.TextStyle.short
         )
         
+        # Поле описания
         self.description = TextInput(
             label=description_label,
             placeholder=description_placeholder,
@@ -195,17 +202,33 @@ class TicketModal(Modal):
                     await interaction.response.send_message(embed=embed, ephemeral=True)
                     return
             
-            await interaction.response.defer(ephemeral=True)
+            # Отправляем подтверждение
+            await interaction.response.send_message(
+                f"{Emojis.CLOCK} Создаю тикет...",
+                ephemeral=True,
+                delete_after=2
+            )
+            
+            # Создаем тикет
             await create_ticket_channel(interaction, self.ticket_type, self.title_input.value, self.description.value)
+            
         except Exception as e:
             print(f"Ошибка в модальном окне: {e}")
+            traceback.print_exc()
+            
             try:
                 await interaction.response.send_message(
-                    f"{Emojis.CROSS} Произошла ошибка. Попробуйте еще раз.",
+                    f"{Emojis.CROSS} Произошла ошибка при создании тикета. Попробуйте еще раз.",
                     ephemeral=True
                 )
             except:
-                pass
+                try:
+                    await interaction.followup.send(
+                        f"{Emojis.CROSS} Произошла ошибка при создании тикета. Попробуйте еще раз.",
+                        ephemeral=True
+                    )
+                except:
+                    pass
 
 # ==================== КНОПКИ ГЛАВНОЙ ПАНЕЛИ ====================
 class MainPanelView(View):
@@ -214,36 +237,44 @@ class MainPanelView(View):
     
     @discord.ui.button(label=f"{Emojis.PROBLEM} ПРОБЛЕМА", style=discord.ButtonStyle.red, custom_id="ticket_problem", row=0)
     async def problem_button(self, interaction: discord.Interaction, button: Button):
-        modal = TicketModal(
-            "problem",
-            "Кратко опишите проблему...",
-            "• Что именно произошло?\n• Когда началось?\n• Как это влияет на игру?\n• Прикрепите скриншоты если есть"
-        )
-        await interaction.response.send_modal(modal)
+        try:
+            modal = TicketModal("problem")
+            await interaction.response.send_modal(modal)
+        except Exception as e:
+            print(f"Ошибка в кнопке проблемы: {e}")
+            await interaction.response.send_message(
+                f"{Emojis.CROSS} Ошибка открытия формы. Попробуйте снова.",
+                ephemeral=True
+            )
     
     @discord.ui.button(label=f"{Emojis.IDEA} ИДЕЯ", style=discord.ButtonStyle.green, custom_id="ticket_idea", row=0)
     async def idea_button(self, interaction: discord.Interaction, button: Button):
-        modal = TicketModal(
-            "idea",
-            "Название идеи...",
-            "• В чем суть идеи?\n• Какую проблему решает?\n• Какие преимущества?\n• Возможная реализация"
-        )
-        await interaction.response.send_modal(modal)
+        try:
+            modal = TicketModal("idea")
+            await interaction.response.send_modal(modal)
+        except Exception as e:
+            print(f"Ошибка в кнопке идеи: {e}")
+            await interaction.response.send_message(
+                f"{Emojis.CROSS} Ошибка открытия формы. Попробуйте снова.",
+                ephemeral=True
+            )
     
     @discord.ui.button(label=f"{Emojis.YOUTUBE} YOUTUBE", style=discord.ButtonStyle.red, custom_id="ticket_youtube", row=1)
     async def youtube_button(self, interaction: discord.Interaction, button: Button):
-        modal = TicketModal(
-            "youtube",
-            "Тема видео...",
-            f"• {Emojis.YOUTUBE} **Канал YouTube:**\n• {Emojis.SUBSCRIBE} **Кол-во подписчиков:**\n• {Emojis.GAME} **Ник в игре:**\n• {Emojis.LINK} **Ссылки на соцсети:**\n• {Emojis.EMAIL} **Контакт для связи:**\n• **Описание видео:**",
-            "📋 ИНФОРМАЦИЯ ДЛЯ СВЯЗИ"
-        )
-        await interaction.response.send_modal(modal)
+        try:
+            modal = TicketModal("youtube")
+            await interaction.response.send_modal(modal)
+        except Exception as e:
+            print(f"Ошибка в кнопке YouTube: {e}")
+            await interaction.response.send_message(
+                f"{Emojis.CROSS} Ошибка открытия формы. Попробуйте снова.",
+                ephemeral=True
+            )
 
 # ==================== ВЫБОР УЧАСТНИКА ДЛЯ ДОБАВЛЕНИЯ ====================
 class AddUserModal(Modal):
     def __init__(self, channel):
-        super().__init__(title=f"{Emojis.ADD_USER} ДОБАВЛЕНИЕ УЧАСТНИКА", timeout=300)
+        super().__init__(title=f"{Emojis.ADD_USER} ДОБАВЛЕНИЕ УЧАСТНИКА", timeout=None)
         self.channel = channel
         
         self.user_input = TextInput(
@@ -370,6 +401,10 @@ class UserTicketView(View):
             await interaction.response.send_modal(modal)
         except Exception as e:
             print(f"Ошибка в кнопке добавления: {e}")
+            await interaction.response.send_message(
+                f"{Emojis.CROSS} Ошибка. Попробуйте снова.",
+                ephemeral=True
+            )
 
 # ==================== КНОПКИ ДЛЯ АДМИНИСТРАЦИИ ====================
 class StaffTicketView(View):
@@ -413,6 +448,10 @@ class StaffTicketView(View):
             await interaction.response.send_modal(modal)
         except Exception as e:
             print(f"Ошибка в кнопке добавления (staff): {e}")
+            await interaction.response.send_message(
+                f"{Emojis.CROSS} Ошибка. Попробуйте снова.",
+                ephemeral=True
+            )
     
     @discord.ui.button(label=f"{Emojis.QUESTION} ЗАПРОСИТЬ", style=discord.ButtonStyle.gray, custom_id="staff_request", row=0)
     async def request_info(self, interaction: discord.Interaction, button: Button):
@@ -441,6 +480,10 @@ class StaffTicketView(View):
                 await interaction.response.send_message(f"{creator.mention}", embed=embed)
         except Exception as e:
             print(f"Ошибка в кнопке запроса: {e}")
+            await interaction.response.send_message(
+                f"{Emojis.CROSS} Ошибка. Попробуйте снова.",
+                ephemeral=True
+            )
     
     @discord.ui.button(label="", style=discord.ButtonStyle.red, custom_id="close_ticket", row=1)
     async def close_button(self, interaction: discord.Interaction, button: Button):
@@ -486,6 +529,10 @@ class StaffTicketView(View):
                 await channel.delete()
         except Exception as e:
             print(f"Ошибка при закрытии тикета: {e}")
+            await interaction.response.send_message(
+                f"{Emojis.CROSS} Ошибка закрытия тикета.",
+                ephemeral=True
+            )
 
 # ==================== ФУНКЦИЯ СОЗДАНИЯ ТИКЕТА ====================
 async def create_ticket_channel(interaction, ticket_type, title, description):
@@ -525,7 +572,7 @@ async def create_ticket_channel(interaction, ticket_type, title, description):
         color_name = "YOUTUBE"
         color = Colors.YOUTUBE
     
-    channel_name = f"{prefix}-{user_name}-{clean_title}".lower()
+    channel_name = f"{prefix}-{user_name}-{clean_title}".lower()[:100]
     
     # Настраиваем права
     overwrites = {
@@ -568,18 +615,21 @@ async def create_ticket_channel(interaction, ticket_type, title, description):
     # Создаем канал
     try:
         ticket_channel = await category.create_text_channel(
-            name=channel_name[:100],
+            name=channel_name,
             overwrites=overwrites,
             topic=f"{prefix} | {title[:50]}"
         )
     except Exception as e:
         print(f"Ошибка создания канала: {e}")
-        embed = discord.Embed(
-            title=f"{Emojis.CROSS} ОШИБКА",
-            description="Не удалось создать тикет. Попробуйте позже.",
-            color=Colors.DANGER
-        )
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        try:
+            embed = discord.Embed(
+                title=f"{Emojis.CROSS} ОШИБКА",
+                description="Не удалось создать тикет. Попробуйте позже.",
+                color=Colors.DANGER
+            )
+            await interaction.followup.send(embed=embed, ephemeral=True)
+        except:
+            pass
         return
     
     # Создаем основное сообщение
@@ -607,14 +657,17 @@ async def create_ticket_channel(interaction, ticket_type, title, description):
     if ticket_role:
         mention_text += f" {ticket_role.mention}"
     
-    await ticket_channel.send(content=mention_text, embed=embed, view=staff_view)
-    
-    # Сообщение с кнопками для автора
-    user_embed = discord.Embed(
-        description=f"{Emojis.INFO} **Ваши кнопки для управления тикетом:**",
-        color=Colors.PRIMARY
-    )
-    await ticket_channel.send(embed=user_embed, view=user_view)
+    try:
+        await ticket_channel.send(content=mention_text, embed=embed, view=staff_view)
+        
+        # Сообщение с кнопками для автора
+        user_embed = discord.Embed(
+            description=f"{Emojis.INFO} **Ваши кнопки для управления тикетом:**",
+            color=Colors.PRIMARY
+        )
+        await ticket_channel.send(embed=user_embed, view=user_view)
+    except Exception as e:
+        print(f"Ошибка отправки сообщений в тикет: {e}")
     
     # Сохраняем в базу
     tickets_data = load_data(TICKETS_FILE)
@@ -632,19 +685,22 @@ async def create_ticket_channel(interaction, ticket_type, title, description):
         save_data(COOLDOWN_FILE, cooldowns)
     
     # Отправляем подтверждение
-    confirm_embed = discord.Embed(
-        title=f"{Emojis.CHECK} ТИКЕТ СОЗДАН",
-        description=f"Ваш тикет создан: {ticket_channel.mention}",
-        color=color
-    )
-    
-    confirm_embed.add_field(
-        name=f"{Emojis.INFO} ЧТО ДАЛЬШЕ?",
-        value="1. Ожидайте ответа администрации\n2. Используйте кнопки в тикете\n3. Не закрывайте канал",
-        inline=False
-    )
-    
-    await interaction.followup.send(embed=confirm_embed, ephemeral=True)
+    try:
+        confirm_embed = discord.Embed(
+            title=f"{Emojis.CHECK} ТИКЕТ СОЗДАН",
+            description=f"Ваш тикет создан: {ticket_channel.mention}",
+            color=color
+        )
+        
+        confirm_embed.add_field(
+            name=f"{Emojis.INFO} ЧТО ДАЛЬШЕ?",
+            value="1. Ожидайте ответа администрации\n2. Используйте кнопки в тикете\n3. Не закрывайте канал",
+            inline=False
+        )
+        
+        await interaction.followup.send(embed=confirm_embed, ephemeral=True)
+    except Exception as e:
+        print(f"Ошибка отправки подтверждения: {e}")
 
 # ==================== КОМАНДЫ БОТА ====================
 @bot.event
@@ -668,11 +724,27 @@ async def on_ready():
             await auto_setup(guild)
     
     # Регистрируем View
-    bot.add_view(MainPanelView())
-    bot.add_view(UserTicketView(0, 0))
-    bot.add_view(StaffTicketView(0, 0, True))
+    try:
+        bot.add_view(MainPanelView())
+        bot.add_view(UserTicketView(0, 0))
+        bot.add_view(StaffTicketView(0, 0, True))
+    except Exception as e:
+        print(f"Ошибка регистрации View: {e}")
     
     print("✅ Бот готов к работе")
+
+@bot.event
+async def on_interaction(interaction: discord.Interaction):
+    """Обработчик всех взаимодействий"""
+    try:
+        if interaction.type == discord.InteractionType.component:
+            # Логируем нажатие кнопок
+            print(f"Кнопка нажата: {interaction.data.get('custom_id', 'unknown')} пользователем {interaction.user}")
+    except Exception as e:
+        print(f"Ошибка в обработчике взаимодействия: {e}")
+    
+    # Продолжаем стандартную обработку
+    await bot.process_application_commands(interaction)
 
 @bot.command(name="панель")
 @commands.has_permissions(administrator=True)
@@ -736,47 +808,47 @@ async def setup_panel(ctx):
     
     # Создаем красивую панель
     embed = discord.Embed(
-        title=f"{Emojis.TICKET} СИСТЕМА ТИКЕТОВ",
+        title="🎫 **СИСТЕМА ТИКЕТОВ**",
         description="Выберите тип тикета, нажав на соответствующую кнопку:",
         color=Colors.PRIMARY
     )
     
     embed.add_field(
-        name=f"{Emojis.PROBLEM} **ПРОБЛЕМА / БАГ**",
+        name="🚨 **ПРОБЛЕМА / БАГ**",
         value="• Технические неполадки\n• Ошибки в игре\n• Сбои и лаги\n• Критические проблемы",
         inline=False
     )
     
     embed.add_field(
-        name=f"{Emojis.IDEA} **ИДЕЯ / ПРЕДЛОЖЕНИЕ**",
+        name="💡 **ИДЕЯ / ПРЕДЛОЖЕНИЕ**",
         value="• Новые функции\n• Улучшения геймплея\n• Предложения по балансу\n• Креативные идеи",
         inline=False
     )
     
     embed.add_field(
-        name=f"{Emojis.YOUTUBE} **ЗАПРОС ДЛЯ YOUTUBE**",
+        name="📺 **ЗАПРОС ДЛЯ YOUTUBE**",
         value="• Подача на сотрудничество\n• Рекламные интеграции\n• Обзоры и видео\n• Партнерские программы",
         inline=False
     )
     
     # Разделитель
-    embed.add_field(name="📋 **ИНФОРМАЦИЯ**", value="═" * 30, inline=False)
+    embed.add_field(name="📋 **ИНФОРМАЦИЯ**", value="─" * 30, inline=False)
     
     embed.add_field(
-        name=f"{Emojis.INFO} **ПРАВИЛА СОЗДАНИЯ:**",
-        value="• 1 тикет = 1 вопрос/проблема\n• Описывайте проблему максимально подробно\n• Будьте вежливы и уважительны\n• Ожидайте ответа в приватном канале",
+        name="ℹ️ **ПРАВИЛА СОЗДАНИЯ:**",
+        value="• **1 тикет = 1 вопрос/проблема**\n• Описывайте проблему подробно\n• Будьте вежливы\n• Ожидайте ответа в приватном канале",
         inline=False
     )
     
     embed.add_field(
-        name=f"{Emojis.STAFF} **АДМИНИСТРАЦИЯ:**",
-        value="• Ответ в течение 24 часов\n• Используйте кнопки в тикете для взаимодействия\n• Не спамьте созданием тикетов",
+        name="🛡️ **АДМИНИСТРАЦИЯ:**",
+        value="• Ответ в течение 24 часов\n• Используйте кнопки в тикете\n• **Не спамьте созданием тикетов**",
         inline=False
     )
     
     embed.add_field(
-        name=f"{Emojis.CLOCK} **КУЛДАУН:**",
-        value="• Между тикетами: 10 минут\n• Для администрации: нет кулдауна",
+        name="⏰ **КУЛДАУН:**",
+        value="• Между тикетами: **10 минут**\n• Для администрации: **нет кулдауна**",
         inline=False
     )
     
@@ -887,17 +959,47 @@ async def reset_cd(ctx, user: discord.Member = None):
     
     await ctx.send(embed=embed)
 
+@bot.command(name="очистить")
+@commands.has_permissions(administrator=True)
+async def cleanup(ctx):
+    """Очистить базу данных от старых тикетов"""
+    tickets_data = load_data(TICKETS_FILE)
+    channels_to_remove = []
+    
+    for channel_id, data in list(tickets_data.items()):
+        channel = ctx.guild.get_channel(int(channel_id))
+        if not channel:  # Канал был удален
+            channels_to_remove.append(channel_id)
+    
+    for channel_id in channels_to_remove:
+        del tickets_data[channel_id]
+    
+    save_data(TICKETS_FILE, tickets_data)
+    
+    embed = discord.Embed(
+        title=f"{Emojis.CHECK} БАЗА ОЧИЩЕНА",
+        description=f"Удалено {len(channels_to_remove)} несуществующих тикетов",
+        color=Colors.SUCCESS
+    )
+    await ctx.send(embed=embed)
+
 # ==================== ЗАПУСК БОТА ====================
 if __name__ == "__main__":
     keep_alive()
     
     if not TOKEN:
         print("❌ Токен не найден!")
+        print("ℹ️ Убедитесь, что переменная окружения DISCORD_TOKEN установлена")
         exit(1)
     
     print("🚀 Запуск бота...")
+    print(f"🎫 Поиск роли: {TICKET_ROLE_NAME}")
+    print(f"⏰ КД: {COOLDOWN_TIME//60} минут")
     
     try:
         bot.run(TOKEN)
+    except discord.LoginFailure:
+        print("❌ Неверный токен бота!")
     except Exception as e:
-        print(f"❌ Ошибка: {e}")
+        print(f"❌ Ошибка запуска: {e}")
+        traceback.print_exc()
