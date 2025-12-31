@@ -785,4 +785,171 @@ async def setup_panel(ctx):
     
     main_embed.add_field(
         name=f"{Emojis.STAFF} **АДМИНИСТРАЦИЯ:**",
-        value=f"• Роль **{TICKET_ROLE}** видит ВСЕ тикеты\n• Администрация ответит в течение 24 часов\n• Используйте кнопки в ти
+        value=f"• Роль **{TICKET_ROLE}** видит ВСЕ тикеты\n• Администрация ответит в течение 24 часов\n• Используйте кнопки в тикете для управления",
+        inline=False
+    )
+    
+    main_embed.set_thumbnail(url="https://i.imgur.com/3tM5Z6G.png")  # Красивая иконка
+    main_embed.set_footer(text="🎫 Бот создан Skarry | 🕐 Работает 24/7 на Render.com")
+    
+    # Создаем второй embed для YouTube гида
+    youtube_embed = discord.Embed(
+        title=f"{Emojis.YOUTUBE} **ВИДЕО-ГИД ПО ИСПОЛЬЗОВАНИЮ**",
+        description="Не знаете как пользоваться системой? Посмотрите наше обучающее видео!",
+        color=Colors.YOUTUBE,
+        url="https://www.youtube.com"  # ЗАМЕНИ НА СВОЮ ССЫЛКУ!
+    )
+    
+    youtube_embed.add_field(
+        name="🎬 **ЧТО ВЫ УЗНАЕТЕ:**",
+        value="• Как правильно создавать тикеты\n• Что писать в описании\n• Как общаться с поддержкой\n• Все функции системы",
+        inline=False
+    )
+    
+    youtube_embed.add_field(
+        name="📱 **ДОПОЛНИТЕЛЬНО:**",
+        value="• Примеры хороших тикетов\n• Частые ошибки\n• Советы по описанию проблем\n• FAQ по системе",
+        inline=False
+    )
+    
+    youtube_embed.set_image(url="https://i.imgur.com/example.jpg")  # Превью видео
+    youtube_embed.set_footer(text="Нажмите на заголовок чтобы перейти к видео")
+    
+    # Отправляем панели
+    view = MainPanelView()
+    
+    # Отправляем основную панель
+    main_message = await panel_channel.send(embed=main_embed, view=view)
+    
+    # Отправляем YouTube embed
+    await panel_channel.send(embed=youtube_embed)
+    
+    # Закрепляем сообщения
+    try:
+        await main_message.pin()
+    except:
+        pass
+    
+    # Включаем медленный режим и запрещаем писать
+    await panel_channel.edit(slowmode_delay=30)
+    
+    # Удаляем все лишние сообщения
+    await asyncio.sleep(2)
+    try:
+        async for msg in panel_channel.history(limit=50):
+            if msg.id != main_message.id and not msg.embeds:
+                await msg.delete()
+    except:
+        pass
+    
+    # Отправляем подтверждение
+    success_embed = discord.Embed(
+        title=f"{Emojis.CHECK} ПАНЕЛЬ СОЗДАНА!",
+        description=f"Красивая панель тикетов создана в {panel_channel.mention}",
+        color=Colors.SUCCESS
+    )
+    success_embed.add_field(name="🎨 Дизайн", value="Современный и понятный", inline=True)
+    success_embed.add_field(name="🎯 Функции", value="3 типа тикетов + YouTube гид", inline=True)
+    success_embed.add_field(name="🛡️ Права", value=f"Роль {TICKET_ROLE} видит все", inline=True)
+    
+    await ctx.message.delete()
+    await ctx.send(embed=success_embed, delete_after=10)
+
+@bot.event
+async def on_message(message):
+    # Авто-удаление сообщений в канале панели (кроме бота)
+    if message.channel.name.lower() == f"{Emojis.TICKET}-панель-тикетов".lower() and not message.author.bot:
+        try:
+            await message.delete()
+            
+            # Отправляем предупреждение
+            if not message.author.guild_permissions.administrator:
+                try:
+                    warning = discord.Embed(
+                        title=f"{Emojis.WARNING} ВНИМАНИЕ!",
+                        description=f"В канале {message.channel.mention} **нельзя писать сообщения**!\n\nИспользуйте **кнопки** для создания тикетов.",
+                        color=Colors.WARNING
+                    )
+                    warning.add_field(name="📝 Что делать?", value="Нажмите на одну из кнопок выше", inline=False)
+                    warning.set_footer(text="Этот канал предназначен только для кнопок")
+                    await message.author.send(embed=warning)
+                except:
+                    pass
+        except:
+            pass
+    
+    await bot.process_commands(message)
+
+@bot.command(name="пинг")
+async def ping(ctx):
+    """Проверка работы бота"""
+    latency = round(bot.latency * 1000)
+    
+    embed = discord.Embed(
+        title=f"{Emojis.TICKET} СТАТУС СИСТЕМЫ",
+        color=Colors.PRIMARY
+    )
+    
+    embed.add_field(name=f"{Emojis.CLOCK} ЗАДЕРЖКА", value=f"`{latency}ms`", inline=True)
+    embed.add_field(name=f"{Emojis.STAFF} РОЛЬ", value=TICKET_ROLE, inline=True)
+    embed.add_field(name=f"{Emojis.INFO} ВЕРСИЯ", value="2.0", inline=True)
+    
+    embed.add_field(name=f"{Emojis.CHECK} СТАТУС", value="✅ **ОНЛАЙН**", inline=False)
+    embed.add_field(name=f"{Emojis.YOUTUBE} ГИД", value="Доступен в панели тикетов", inline=True)
+    embed.add_field(name="🎨 ДИЗАЙН", value="Премиум", inline=True)
+    
+    embed.set_footer(text="Бот создан Skarry | Работает на Render.com")
+    
+    await ctx.send(embed=embed)
+
+@bot.command(name="обновить")
+@commands.has_permissions(administrator=True)
+async def refresh_panel(ctx):
+    """Обновить панель тикетов"""
+    await setup_panel(ctx)
+
+@bot.command(name="статистика")
+async def stats(ctx):
+    """Статистика тикетов"""
+    tickets_data = load_data(TICKETS_FILE)
+    
+    embed = discord.Embed(
+        title=f"{Emojis.TICKET} СТАТИСТИКА ТИКЕТОВ",
+        color=Colors.PRIMARY
+    )
+    
+    total = len(tickets_data)
+    problems = len([t for t in tickets_data.values() if t.get("type") == "problem"])
+    ideas = len([t for t in tickets_data.values() if t.get("type") == "idea"])
+    youtube = len([t for t in tickets_data.values() if t.get("type") == "youtube"])
+    
+    embed.add_field(name="📊 ВСЕГО ТИКЕТОВ", value=f"**{total}**", inline=True)
+    embed.add_field(name=f"{Emojis.PROBLEM} ПРОБЛЕМЫ", value=f"**{problems}**", inline=True)
+    embed.add_field(name=f"{Emojis.IDEA} ИДЕИ", value=f"**{ideas}**", inline=True)
+    
+    if youtube > 0:
+        embed.add_field(name=f"{Emojis.YOUTUBE} YOUTUBE", value=f"**{youtube}**", inline=True)
+    
+    # Самый старый тикет
+    if tickets_data:
+        oldest = min(tickets_data.values(), key=lambda x: x.get("created_at", 0))
+        oldest_time = int(oldest.get("created_at", time.time()))
+        embed.add_field(name="📅 САМЫЙ СТАРЫЙ", value=f"<t:{oldest_time}:R>", inline=True)
+    
+    embed.set_footer(text=f"Роль для просмотра: {TICKET_ROLE}")
+    await ctx.send(embed=embed)
+
+# ==================== ЗАПУСК БОТА ====================
+if __name__ == "__main__":
+    keep_alive()
+    
+    if not TOKEN:
+        print(f"{Emojis.CROSS} ОШИБКА: Токен не найден!")
+        print(f"{Emojis.INFO} Добавьте DISCORD_TOKEN в переменные окружения Render")
+        exit(1)
+    
+    print(f"{Emojis.TICKET} Запускаем Discord бота...")
+    print(f"{Emojis.INFO} Роль для просмотра тикетов: {TICKET_ROLE}")
+    print(f"{Emojis.CLOCK} КД между тикетами: {COOLDOWN_TIME//60} минут")
+    
+    bot.run(TOKEN)
