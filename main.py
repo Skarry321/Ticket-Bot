@@ -111,8 +111,8 @@ class Emojis:
     LINK = "🔗"
     STATUS = "📊"
     EYE = "👁️"
+    SUGGESTION = "💭"
 
-# ==================== ФУНКЦИЯ СОЗДАНИЯ СТРУКТУРЫ ====================
 async def auto_setup(guild):
     config = load_data(CONFIG_FILE)
     if str(guild.id) in config.get('initialized_guilds', []):
@@ -140,87 +140,157 @@ async def auto_setup(guild):
     config['initialized_guilds'].append(str(guild.id))
     save_data(CONFIG_FILE, config)
 
-# ==================== МОДАЛЬНОЕ ОКНО ДЛЯ РЕДАКТИРОВАНИЯ ====================
-class EditTicketModal(Modal):
-    def __init__(self, current_data, ticket_type):
-        super().__init__(title=f"{Emojis.EDIT} РЕДАКТИРОВАНИЕ ЗАЯВКИ", timeout=None)
-        self.ticket_type = ticket_type
+# ==================== МОДАЛЬНОЕ ОКНО ДЛЯ ДОБАВЛЕНИЯ ПРЕДЛОЖЕНИЙ ====================
+class AddSuggestionModal(Modal):
+    def __init__(self, channel_id):
+        super().__init__(title=f"{Emojis.SUGGESTION} ДОБАВИТЬ ПРЕДЛОЖЕНИЕ", timeout=None)
+        self.channel_id = channel_id
         
-        if ticket_type == "problem":
-            title_placeholder = "Кратко опишите проблему..."
-            description_placeholder = "• Что именно произошло?\n• Когда началось?\n• Как это влияет на игру?"
-            description_label = "📖 ПОДРОБНОЕ ОПИСАНИЕ"
-        elif ticket_type == "idea":
-            title_placeholder = "Название идеи..."
-            description_placeholder = "• В чем суть идеи?\n• Какую проблему решает?\n• Какие преимущества?"
-            description_label = "📖 ОПИСАНИЕ ИДЕИ"
-        else:  # youtube
-            title_placeholder = "Название видео / коллаборации..."
-            description_placeholder = "• Информация о канале\n• Игровая информация\n• Предложение по сотрудничеству"
-            description_label = "📖 ПОЛНАЯ ИНФОРМАЦИЯ"
-        
-        self.title_input = TextInput(
-            label="📝 НАЗВАНИЕ / ТЕМА",
-            placeholder=title_placeholder,
-            max_length=100,
-            required=True,
-            style=discord.TextStyle.short,
-            default=current_data.get('title', '')
+        self.suggestion_type = Select(
+            placeholder="📝 Выберите тип информации...",
+            options=[
+                discord.SelectOption(
+                    label="ДОПОЛНИТЕЛЬНАЯ ИНФОРМАЦИЯ",
+                    value="info",
+                    emoji="📋",
+                    description="Добавить важные детали"
+                ),
+                discord.SelectOption(
+                    label="ПРЕДЛОЖЕНИЕ ПО РЕШЕНИЮ",
+                    value="solution",
+                    emoji="💡",
+                    description="Предложить решение проблемы"
+                ),
+                discord.SelectOption(
+                    label="ИДЕИ ДЛЯ УЛУЧШЕНИЯ",
+                    value="improvement",
+                    emoji="🌟",
+                    description="Предложить улучшения"
+                ),
+                discord.SelectOption(
+                    label="ВОПРОСЫ К АДМИНИСТРАЦИИ",
+                    value="question",
+                    emoji="❓",
+                    description="Задать уточняющие вопросы"
+                ),
+                discord.SelectOption(
+                    label="ССЫЛКИ И МАТЕРИАЛЫ",
+                    value="links",
+                    emoji="🔗",
+                    description="Добавить ссылки, скриншоты и т.д."
+                )
+            ],
+            min_values=1,
+            max_values=1
         )
         
-        self.description = TextInput(
-            label=description_label,
-            placeholder=description_placeholder,
-            max_length=2000,
+        self.suggestion_text = TextInput(
+            label="📝 ВАШЕ ПРЕДЛОЖЕНИЕ / ИНФОРМАЦИЯ",
+            placeholder="Подробно опишите ваше предложение, информацию или вопрос...",
+            max_length=1500,
             required=True,
-            style=discord.TextStyle.paragraph,
-            default=current_data.get('description', '')
+            style=discord.TextStyle.paragraph
         )
         
-        self.add_item(self.title_input)
-        self.add_item(self.description)
+        self.add_item(self.suggestion_type)
+        self.add_item(self.suggestion_text)
     
     async def on_submit(self, interaction: discord.Interaction):
         try:
-            await interaction.response.send_message(
-                f"{Emojis.CHECK} Заявка обновлена!",
-                ephemeral=True,
-                delete_after=3
-            )
+            await interaction.response.defer(ephemeral=True)
             
-            # Обновляем данные в файле
+            type_emoji = {
+                "info": "📋",
+                "solution": "💡", 
+                "improvement": "🌟",
+                "question": "❓",
+                "links": "🔗"
+            }
+            
+            type_text = {
+                "info": "ДОПОЛНИТЕЛЬНАЯ ИНФОРМАЦИЯ",
+                "solution": "ПРЕДЛОЖЕНИЕ ПО РЕШЕНИЮ",
+                "improvement": "ИДЕИ ДЛЯ УЛУЧШЕНИЯ",
+                "question": "ВОПРОС К АДМИНИСТРАЦИИ",
+                "links": "ССЫЛКИ И МАТЕРИАЛЫ"
+            }
+            
+            selected_type = self.suggestion_type.values[0]
+            
+            # Сохраняем предложение в базе данных
             tickets_data = load_data(TICKETS_FILE)
-            channel_id = str(interaction.channel.id)
+            channel_id_str = str(self.channel_id)
             
-            if channel_id in tickets_data:
-                tickets_data[channel_id]['title'] = self.title_input.value
-                tickets_data[channel_id]['description'] = self.description.value
-                tickets_data[channel_id]['last_edited'] = time.time()
-                tickets_data[channel_id]['edited_by'] = str(interaction.user.id)
-                save_data(TICKETS_FILE, tickets_data)
+            if channel_id_str in tickets_data:
+                if 'suggestions' not in tickets_data[channel_id_str]:
+                    tickets_data[channel_id_str]['suggestions'] = []
                 
-                # Обновляем сообщение в канале
-                channel = interaction.channel
-                async for message in channel.history(limit=10):
-                    if message.embeds and message.author == bot.user:
-                        embed = message.embeds[0]
-                        embed.title = f"{embed.title.split('|')[0].strip()} | {self.title_input.value[:50]}"
-                        embed.description = f"**{self.title_input.value}**\n\n{self.description.value}"
-                        
-                        # Обновляем поле статуса если есть
-                        for i, field in enumerate(embed.fields):
-                            if field.name.startswith(f"{Emojis.STATUS}"):
-                                embed.set_field_at(i, name=field.name, value=field.value, inline=True)
-                                break
-                        
-                        await message.edit(embed=embed)
-                        break
-        except Exception as e:
-            print(f"Ошибка при редактировании заявки: {e}")
-            await interaction.response.send_message(
-                f"{Emojis.CROSS} Ошибка при обновлении заявки.",
-                ephemeral=True
+                suggestion_data = {
+                    'type': selected_type,
+                    'text': self.suggestion_text.value,
+                    'author': str(interaction.user.id),
+                    'author_name': interaction.user.name,
+                    'timestamp': time.time(),
+                    'suggestion_id': str(int(time.time() * 1000))
+                }
+                
+                tickets_data[channel_id_str]['suggestions'].append(suggestion_data)
+                save_data(TICKETS_FILE, tickets_data)
+            
+            # Создаем embed с предложением
+            embed = discord.Embed(
+                title=f"{type_emoji[selected_type]} {type_text[selected_type]}",
+                description=self.suggestion_text.value,
+                color=Colors.PRIMARY,
+                timestamp=datetime.datetime.now()
             )
+            
+            embed.add_field(
+                name="👤 Автор",
+                value=f"{interaction.user.mention} ({interaction.user.name})",
+                inline=True
+            )
+            
+            embed.add_field(
+                name="📅 Добавлено",
+                value=f"<t:{int(time.time())}:R>",
+                inline=True
+            )
+            
+            embed.set_footer(text=f"ID предложения: {suggestion_data['suggestion_id']}")
+            
+            # Отправляем предложение в канал
+            channel = interaction.guild.get_channel(self.channel_id)
+            if channel:
+                await channel.send(embed=embed)
+                
+                # Уведомление автору
+                success_embed = discord.Embed(
+                    title=f"{Emojis.CHECK} ПРЕДЛОЖЕНИЕ ДОБАВЛЕНО",
+                    description="Ваше предложение успешно добавлено в заявку!",
+                    color=Colors.SUCCESS
+                )
+                await interaction.followup.send(embed=success_embed, ephemeral=True)
+            else:
+                error_embed = discord.Embed(
+                    title=f"{Emojis.CROSS} ОШИБКА",
+                    description="Канал не найден",
+                    color=Colors.DANGER
+                )
+                await interaction.followup.send(embed=error_embed, ephemeral=True)
+                
+        except Exception as e:
+            print(f"Ошибка добавления предложения: {e}")
+            traceback.print_exc()
+            try:
+                error_embed = discord.Embed(
+                    title=f"{Emojis.CROSS} ОШИБКА",
+                    description="Не удалось добавить предложение",
+                    color=Colors.DANGER
+                )
+                await interaction.followup.send(embed=error_embed, ephemeral=True)
+            except:
+                pass
 
 # ==================== МОДАЛЬНОЕ ОКНО ДЛЯ YOUTUBE ====================
 class YouTubeModal(Modal):
@@ -362,7 +432,7 @@ class YouTubeModal(Modal):
             
             full_description += f"\n**🎫 Discord пользователь:** {interaction.user.mention}"
             
-            # Сохраняем данные для возможного редактирования
+            # Сохраняем данные
             youtube_data = {
                 'name': self.name_input.value,
                 'age': self.age_input.value,
@@ -480,97 +550,95 @@ class TicketModal(Modal):
                 except:
                     pass
 
-# ==================== ВЫБОР УЧАСТНИКА ДЛЯ ДОБАВЛЕНИЯ ====================
-class AddUserModal(Modal):
-    def __init__(self, channel):
-        super().__init__(title=f"{Emojis.ADD_USER} ДОБАВЛЕНИЕ УЧАСТНИКА", timeout=None)
-        self.channel = channel
+# ==================== МОДАЛЬНОЕ ОКНО ДЛЯ РЕДАКТИРОВАНИЯ ====================
+class EditTicketModal(Modal):
+    def __init__(self, current_title, current_description):
+        super().__init__(title=f"{Emojis.EDIT} РЕДАКТИРОВАТЬ ЗАЯВКУ", timeout=None)
         
-        self.user_input = TextInput(
-            label="👤 УКАЖИТЕ УЧАСТНИКА",
-            placeholder="@упоминание или ID пользователя",
+        self.title_input = TextInput(
+            label="📝 НАЗВАНИЕ / ТЕМА",
+            placeholder="Введите новое название...",
+            max_length=100,
             required=True,
-            max_length=100
+            style=discord.TextStyle.short,
+            default=current_title
         )
         
-        self.add_item(self.user_input)
+        self.description = TextInput(
+            label="📖 ОПИСАНИЕ",
+            placeholder="Введите новое описание...",
+            max_length=2000,
+            required=True,
+            style=discord.TextStyle.paragraph,
+            default=current_description
+        )
+        
+        self.add_item(self.title_input)
+        self.add_item(self.description)
     
     async def on_submit(self, interaction: discord.Interaction):
         try:
-            await interaction.response.defer(ephemeral=True)
+            await interaction.response.send_message(
+                f"{Emojis.CHECK} Заявка обновляется...",
+                ephemeral=True,
+                delete_after=2
+            )
             
-            user_text = self.user_input.value.strip()
-            user = None
+            # Обновляем данные в файле
+            tickets_data = load_data(TICKETS_FILE)
+            channel_id = str(interaction.channel.id)
             
-            if user_text.startswith('<@') and user_text.endswith('>'):
-                try:
-                    user_id = int(user_text[2:-1].replace('!', ''))
-                    user = interaction.guild.get_member(user_id)
-                except:
-                    pass
-            
-            if not user and user_text.isdigit():
-                user = interaction.guild.get_member(int(user_text))
-            
-            if not user:
-                for member in interaction.guild.members:
-                    if user_text.lower() in member.name.lower() or user_text.lower() in (member.display_name or "").lower():
-                        user = member
+            if channel_id in tickets_data:
+                tickets_data[channel_id]['title'] = self.title_input.value
+                tickets_data[channel_id]['description'] = self.description.value
+                tickets_data[channel_id]['last_edited'] = time.time()
+                tickets_data[channel_id]['edited_by'] = str(interaction.user.id)
+                save_data(TICKETS_FILE, tickets_data)
+                
+                # Обновляем сообщение в канале
+                channel = interaction.channel
+                async for message in channel.history(limit=10):
+                    if message.embeds and message.author == bot.user:
+                        embed = message.embeds[0]
+                        embed.title = f"{embed.title.split('|')[0].strip()} | {self.title_input.value[:50]}"
+                        embed.description = f"**{self.title_input.value}**\n\n{self.description.value}"
+                        
+                        # Обновляем поле "Последнее редактирование"
+                        edit_field_exists = False
+                        for i, field in enumerate(embed.fields):
+                            if field.name == "📝 Последнее редактирование":
+                                embed.set_field_at(i, 
+                                    name="📝 Последнее редактирование",
+                                    value=f"<t:{int(time.time())}:R> пользователем {interaction.user.mention}",
+                                    inline=True
+                                )
+                                edit_field_exists = True
+                                break
+                        
+                        if not edit_field_exists:
+                            embed.add_field(
+                                name="📝 Последнее редактирование",
+                                value=f"<t:{int(time.time())}:R> пользователем {interaction.user.mention}",
+                                inline=True
+                            )
+                        
+                        await message.edit(embed=embed)
+                        
+                        # Отправляем уведомление
+                        notify_embed = discord.Embed(
+                            title=f"{Emojis.EDIT} ЗАЯВКА ОБНОВЛЕНА",
+                            description=f"{interaction.user.mention} обновил(а) заявку",
+                            color=Colors.SUCCESS,
+                            timestamp=datetime.datetime.now()
+                        )
+                        await channel.send(embed=notify_embed)
                         break
-            
-            if not user:
-                embed = discord.Embed(
-                    title=f"{Emojis.CROSS} ОШИБКА",
-                    description="Участник не найден.",
-                    color=Colors.DANGER
-                )
-                await interaction.followup.send(embed=embed, ephemeral=True)
-                return
-            
-            if user.bot:
-                embed = discord.Embed(
-                    title=f"{Emojis.CROSS} ОШИБКА",
-                    description="Нельзя добавлять ботов!",
-                    color=Colors.DANGER
-                )
-                await interaction.followup.send(embed=embed, ephemeral=True)
-                return
-            
-            await self.channel.set_permissions(user, 
-                view_channel=True, 
-                send_messages=True, 
-                read_message_history=True,
-                attach_files=True
-            )
-            
-            embed = discord.Embed(
-                title=f"{Emojis.CHECK} УЧАСТНИК ДОБАВЛЕН",
-                description=f"**{user.mention}** добавлен в тикет!",
-                color=Colors.SUCCESS
-            )
-            
-            await interaction.followup.send(embed=embed, ephemeral=True)
-            
-            ticket_embed = discord.Embed(
-                title=f"{Emojis.ADD_USER} НОВЫЙ УЧАСТНИК",
-                description=f"{user.mention} добавлен в тикет",
-                color=Colors.PRIMARY,
-                timestamp=datetime.datetime.now()
-            )
-            
-            await self.channel.send(embed=ticket_embed)
-            
         except Exception as e:
-            print(f"Ошибка добавления пользователя: {e}")
-            try:
-                embed = discord.Embed(
-                    title=f"{Emojis.CROSS} ОШИБКА",
-                    description="Не удалось добавить участника",
-                    color=Colors.DANGER
-                )
-                await interaction.followup.send(embed=embed, ephemeral=True)
-            except:
-                pass
+            print(f"Ошибка при редактировании заявки: {e}")
+            await interaction.followup.send(
+                f"{Emojis.CROSS} Ошибка при обновлении заявки.",
+                ephemeral=True
+            )
 
 # ==================== ВЫБОР СТАТУСА ====================
 class StatusSelect(Select):
@@ -636,7 +704,7 @@ class StatusSelect(Select):
                 if message.embeds and message.author == bot.user:
                     embed = message.embeds[0]
                     
-                    # Обновляем или добавляем поле статуса
+                    # Обновляем поле статуса
                     status_field_exists = False
                     for i, field in enumerate(embed.fields):
                         if field.name.startswith(f"{Emojis.STATUS}"):
@@ -656,12 +724,7 @@ class StatusSelect(Select):
                         )
                     
                     # Изменяем цвет embed в зависимости от статуса
-                    if self.values[0] == "closed":
-                        embed.color = Colors.STATUS_CLOSED
-                    elif self.values[0] == "open":
-                        embed.color = Colors.STATUS_OPEN
-                    else:
-                        embed.color = Colors.STATUS_IN_REVIEW
+                    embed.color = status_color
                     
                     await message.edit(embed=embed)
                     
@@ -686,7 +749,7 @@ class StatusSelectView(View):
         super().__init__(timeout=None)
         self.add_item(StatusSelect(channel_id))
 
-# ==================== КНОПКИ ДЛЯ АВТОРА ТИКЕТА ====================
+# ==================== КНОПКИ ДЛЯ АВТОРА ЗАЯВКИ ====================
 class UserTicketView(View):
     def __init__(self, channel_id, creator_id):
         super().__init__(timeout=None)
@@ -712,16 +775,10 @@ class UserTicketView(View):
             if channel_id_str in tickets_data:
                 ticket_data = tickets_data[channel_id_str]
                 
-                # Определяем тип тикета
-                ticket_type = ticket_data.get('type', 'problem')
-                
-                # Создаем модальное окно с текущими данными
-                current_data = {
-                    'title': ticket_data.get('title', ''),
-                    'description': ticket_data.get('description', '')
-                }
-                
-                modal = EditTicketModal(current_data, ticket_type)
+                modal = EditTicketModal(
+                    ticket_data.get('title', ''),
+                    ticket_data.get('description', '')
+                )
                 await interaction.response.send_modal(modal)
             else:
                 await interaction.response.send_message(
@@ -736,32 +793,22 @@ class UserTicketView(View):
                 ephemeral=True
             )
     
-    @discord.ui.button(label=f"{Emojis.ADD_USER} ДОБАВИТЬ", style=discord.ButtonStyle.blurple, custom_id="user_add", row=0)
-    async def add_user(self, interaction: discord.Interaction, button: Button):
+    @discord.ui.button(label=f"{Emojis.SUGGESTION} ДОБАВИТЬ", style=discord.ButtonStyle.blurple, custom_id="user_add", row=0)
+    async def add_suggestion(self, interaction: discord.Interaction, button: Button):
         try:
             if interaction.user.id != self.creator_id:
                 embed = discord.Embed(
                     title=f"{Emojis.CROSS} НЕТ ДОСТУПА",
-                    description="Только автор заявки может добавлять участников",
+                    description="Только автор заявки может добавлять предложения",
                     color=Colors.DANGER
                 )
                 await interaction.response.send_message(embed=embed, ephemeral=True)
                 return
             
-            channel = interaction.guild.get_channel(self.channel_id)
-            if not channel:
-                embed = discord.Embed(
-                    title=f"{Emojis.CROSS} ОШИБКА",
-                    description="Канал не найден",
-                    color=Colors.DANGER
-                )
-                await interaction.response.send_message(embed=embed, ephemeral=True)
-                return
-            
-            modal = AddUserModal(channel)
+            modal = AddSuggestionModal(self.channel_id)
             await interaction.response.send_modal(modal)
         except Exception as e:
-            print(f"Ошибка в кнопке добавления: {e}")
+            print(f"Ошибка в кнопке добавления предложения: {e}")
             await interaction.response.send_message(
                 f"{Emojis.CROSS} Ошибка. Попробуйте снова.",
                 ephemeral=True
@@ -822,7 +869,7 @@ class StaffTicketView(View):
                     timestamp=datetime.datetime.now()
                 )
                 embed.add_field(name="👤 Запросил", value=interaction.user.mention, inline=True)
-                embed.add_field(name="💡 Рекомендация", value="Используйте кнопку 'РЕДАКТИРОВАТЬ' для добавления информации", inline=True)
+                embed.add_field(name="💡 Рекомендация", value="Используйте кнопку 'РЕДАКТИРОВАТЬ' для изменения основной информации или 'ДОБАВИТЬ' для новых предложений", inline=True)
                 
                 await interaction.response.send_message(f"{creator.mention}", embed=embed)
         except Exception as e:
@@ -901,7 +948,7 @@ async def create_ticket_channel(interaction, ticket_type, title, description, ad
     if not category:
         try:
             category = await interaction.guild.create_category(
-                name=f"{Emojis.TICKET} ТИКЕТЫ",
+                name=f"{Emojis.TICKET} ЗАЯВКИ",
                 position=0
             )
         except:
@@ -985,7 +1032,7 @@ async def create_ticket_channel(interaction, ticket_type, title, description, ad
     embed = discord.Embed(
         title=f"{prefix} {color_name} | {title}",
         description=description,
-        color=Colors.STATUS_IN_REVIEW,  # Начальный цвет - рассмотрение
+        color=Colors.STATUS_IN_REVIEW,
         timestamp=datetime.datetime.now()
     )
     
@@ -993,7 +1040,7 @@ async def create_ticket_channel(interaction, ticket_type, title, description, ad
     embed.add_field(name=f"{Emojis.STAFF} АВТОР", value=interaction.user.mention, inline=True)
     embed.add_field(name=f"{Emojis.STATUS} СТАТУС", value=f"{Emojis.EYE} **РАССМАТРИВАЕТСЯ**", inline=True)
     
-    embed.set_footer(text=f"ID: {ticket_channel.id} | Для редактирования нажмите 'РЕДАКТИРОВАТЬ'")
+    embed.set_footer(text=f"ID: {ticket_channel.id}")
     
     # Создаем кнопки
     staff_view = StaffTicketView(ticket_channel.id, interaction.user.id)
@@ -1027,7 +1074,6 @@ async def create_ticket_channel(interaction, ticket_type, title, description, ad
         "channel_name": channel_name
     }
     
-    # Добавляем дополнительные данные для YouTube
     if additional_data and ticket_type == "youtube":
         ticket_data.update(additional_data)
     
@@ -1056,8 +1102,9 @@ async def create_ticket_channel(interaction, ticket_type, title, description, ad
         )
         
         confirm_embed.add_field(
-            name=f"{Emojis.INFO} ЧТО ДАЛЬШЕ?",
-            value="1. Ожидайте ответа администрации\n2. Используйте кнопки в заявке\n3. Для обновления информации нажмите 'РЕДАКТИРОВАТЬ'\n4. Не закрывайте канал",
+            name=f"{Emojis.INFO} ФУНКЦИИ ДЛЯ АВТОРА:",
+            value="""**✏️ РЕДАКТИРОВАТЬ** - изменить основную информацию
+**💭 ДОБАВИТЬ** - добавить предложения, идеи, вопросы или материалы""",
             inline=False
         )
         
@@ -1099,7 +1146,7 @@ class MainPanelView(View):
     @discord.ui.button(label=f"{Emojis.YOUTUBE} ЗАПРОС НА YOUTUBE", style=discord.ButtonStyle.red, custom_id="ticket_youtube", row=1)
     async def youtube_button(self, interaction: discord.Interaction, button: Button):
         try:
-            print(f"Нажата кнопка ЗАПРОС НА YOUTUBE пользователем {interaction.user}")
+            print(f"Нажата кнопка ЗАПРОС НА YOUTUBЕ пользователем {interaction.user}")
             modal = YouTubeModal()
             await interaction.response.send_modal(modal)
         except Exception as e:
@@ -1130,7 +1177,6 @@ async def on_ready():
         for guild in bot.guilds:
             await auto_setup(guild)
     
-    # Регистрируем View
     try:
         bot.add_view(MainPanelView())
         bot.add_view(UserTicketView(0, 0))
@@ -1207,7 +1253,6 @@ async def setup_panel(ctx):
     except:
         pass
     
-    # Создаем красивую панель с обновленным описанием
     embed = discord.Embed(
         title="🎫 **СИСТЕМА ЗАЯВОК**",
         description="Выберите тип заявки, нажав на соответствующую кнопку:",
@@ -1235,7 +1280,7 @@ async def setup_panel(ctx):
         inline=False
     )
     
-    embed.add_field(name="📋 **ИНФОРМАЦИЯ О СТАТУСАХ**", value="─" * 30, inline=False)
+    embed.add_field(name="📋 **ФУНКЦИОНАЛ СИСТЕМЫ**", value="─" * 30, inline=False)
     
     embed.add_field(
         name="👁️ **РАССМАТРИВАЕТСЯ**",
@@ -1257,19 +1302,31 @@ async def setup_panel(ctx):
     
     embed.add_field(
         name="✏️ **ФУНКЦИИ ДЛЯ АВТОРА:**",
-        value="• **РЕДАКТИРОВАТЬ** - изменить информацию в заявке\n• **ДОБАВИТЬ** - добавить участника в обсуждение",
+        value="""**РЕДАКТИРОВАТЬ** - изменить основную информацию в заявке
+**ДОБАВИТЬ** - добавить предложения, идеи, вопросы или материалы""",
+        inline=False
+    )
+    
+    embed.add_field(
+        name="📝 **ТИПЫ ПРЕДЛОЖЕНИЙ:**",
+        value="""**📋 Дополнительная информация** - важные детали
+**💡 Предложение по решению** - способы решения проблемы
+**🌟 Идеи для улучшения** - предложения по улучшению
+**❓ Вопросы к администрации** - уточняющие вопросы
+**🔗 Ссылки и материалы** - скриншоты, видео, ссылки""",
         inline=False
     )
     
     embed.add_field(
         name="🛡️ **ФУНКЦИИ ДЛЯ АДМИНИСТРАЦИИ:**",
-        value="• **СМЕНИТЬ СТАТУС** - изменить статус заявки\n• **ЗАПРОСИТЬ** - запросить доп. информацию\n• **ЗАКРЫТЬ** - завершить заявку",
+        value="""**СМЕНИТЬ СТАТУС** - изменить статус заявки
+**ЗАПРОСИТЬ** - запросить доп. информацию у автора
+**ЗАКРЫТЬ** - завершить заявку""",
         inline=False
     )
     
-    embed.set_footer(text="🎫 Бот создан Skarry | Система статусов и редактирования")
+    embed.set_footer(text="🎫 Бот создан Skarry | Система заявок и предложений")
     
-    # Отправляем панель
     view = MainPanelView()
     message = await panel_channel.send(embed=embed, view=view)
     
@@ -1332,6 +1389,12 @@ async def stats(ctx):
     open_tickets = len([t for t in tickets_data.values() if t.get("status") == "open"])
     closed = len([t for t in tickets_data.values() if t.get("status") == "closed"])
     
+    # Считаем предложения
+    total_suggestions = 0
+    for ticket in tickets_data.values():
+        if 'suggestions' in ticket:
+            total_suggestions += len(ticket['suggestions'])
+    
     embed.add_field(name="📊 Всего заявок", value=f"**{total}**", inline=True)
     embed.add_field(name=f"{Emojis.PROBLEM} Проблем", value=f"**{problems}**", inline=True)
     embed.add_field(name=f"{Emojis.IDEA} Идей", value=f"**{ideas}**", inline=True)
@@ -1342,6 +1405,8 @@ async def stats(ctx):
     embed.add_field(name=f"{Emojis.EYE} На рассмотрении", value=f"**{review}**", inline=True)
     embed.add_field(name=f"{Emojis.CHECK} Открыто", value=f"**{open_tickets}**", inline=True)
     embed.add_field(name=f"{Emojis.LOCK} Закрыто", value=f"**{closed}**", inline=True)
+    
+    embed.add_field(name=f"{Emojis.SUGGESTION} Предложений", value=f"**{total_suggestions}**", inline=True)
     
     await ctx.send(embed=embed)
 
@@ -1402,7 +1467,7 @@ async def cleanup(ctx):
 @bot.command(name="тест")
 async def test_youtube(ctx):
     view = MainPanelView()
-    await ctx.send("Тест кнопки YouTube:", view=view)
+    await ctx.send("Тест кнопок заявок:", view=view)
 
 # ==================== ЗАПУСК БОТА ====================
 if __name__ == "__main__":
