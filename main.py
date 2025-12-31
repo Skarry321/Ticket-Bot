@@ -101,6 +101,10 @@ class Emojis:
     STAFF = "🛡️"
     SETTINGS = "⚙️"
     ROBOT = "🤖"
+    EMAIL = "📧"
+    GAME = "🎮"
+    SUBSCRIBE = "👥"
+    LINK = "🔗"
 
 # ==================== ФУНКЦИЯ СОЗДАНИЯ СТРУКТУРЫ ====================
 async def auto_setup(guild):
@@ -134,7 +138,126 @@ async def auto_setup(guild):
     config['initialized_guilds'].append(str(guild.id))
     save_data(CONFIG_FILE, config)
 
-# ==================== МОДАЛЬНОЕ ОКНО ТИКЕТА ====================
+# ==================== МОДАЛЬНОЕ ОКНО ДЛЯ YOUTUBE ====================
+class YouTubeModal(Modal):
+    def __init__(self):
+        super().__init__(title=f"{Emojis.YOUTUBE} ЗАПРОС ДЛЯ YOUTUBE", timeout=None)
+        
+        # Поле темы
+        self.title_input = TextInput(
+            label="📝 ТЕМА ВИДЕО / КОЛЛАБОРАЦИИ",
+            placeholder="Например: Обзор игры, Коллаборация, Партнерство...",
+            max_length=100,
+            required=True,
+            style=discord.TextStyle.short
+        )
+        
+        # Поле для информации о канале
+        self.channel_info = TextInput(
+            label="📺 ИНФОРМАЦИЯ О КАНАЛЕ YOUTUBE",
+            placeholder=f"• Ссылка на канал YouTube\n• Количество подписчиков\n• Основная тематика\n• Примеры ваших видео",
+            max_length=500,
+            required=True,
+            style=discord.TextStyle.paragraph
+        )
+        
+        # Поле для информации об игре
+        self.game_info = TextInput(
+            label="🎮 ИНФОРМАЦИЯ ОБ ИГРЕ",
+            placeholder=f"• Ваш ник в игре\n• Уровень/ранг\n• Часов в игре\n• Основная роль/класс",
+            max_length=500,
+            required=True,
+            style=discord.TextStyle.paragraph
+        )
+        
+        # Поле для предложения
+        self.proposal = TextInput(
+            label="🤝 ПРЕДЛОЖЕНИЕ / ИДЕЯ",
+            placeholder=f"• Тип сотрудничества\n• Идея для видео\n• Предлагаемые условия\n• Контакт для связи (Discord/Telegram)",
+            max_length=500,
+            required=True,
+            style=discord.TextStyle.paragraph
+        )
+        
+        # Поле для доступности
+        self.availability = TextInput(
+            label="📅 ДОСТУПНОСТЬ",
+            placeholder=f"• Удобное время для записи\n• Часовой пояс\n• Частота возможных коллабораций",
+            max_length=300,
+            required=False,
+            style=discord.TextStyle.paragraph
+        )
+        
+        self.add_item(self.title_input)
+        self.add_item(self.channel_info)
+        self.add_item(self.game_info)
+        self.add_item(self.proposal)
+        self.add_item(self.availability)
+    
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            # Проверка КД
+            cooldowns = load_data(COOLDOWN_FILE)
+            user_id = str(interaction.user.id)
+            
+            if user_id in cooldowns:
+                elapsed = time.time() - cooldowns[user_id]
+                if elapsed < COOLDOWN_TIME and not has_ticket_role(interaction.user):
+                    remaining = COOLDOWN_TIME - elapsed
+                    minutes = int(remaining // 60)
+                    seconds = int(remaining % 60)
+                    
+                    embed = discord.Embed(
+                        title=f"{Emojis.CLOCK} КУЛДАУН",
+                        description=f"⏳ Следующий тикет через **{minutes} минут {seconds} секунд**",
+                        color=Colors.WARNING
+                    )
+                    await interaction.response.send_message(embed=embed, ephemeral=True)
+                    return
+            
+            # Отправляем подтверждение
+            await interaction.response.send_message(
+                f"{Emojis.YOUTUBE} Создаю YouTube тикет...",
+                ephemeral=True
+            )
+            
+            # Собираем все данные
+            full_description = f"""
+**📺 ИНФОРМАЦИЯ О КАНАЛЕ:**
+{self.channel_info.value}
+
+**🎮 ИНФОРМАЦИЯ ОБ ИГРЕ:**
+{self.game_info.value}
+
+**🤝 ПРЕДЛОЖЕНИЕ:**
+{self.proposal.value}
+"""
+            
+            if self.availability.value:
+                full_description += f"\n**📅 ДОСТУПНОСТЬ:**\n{self.availability.value}"
+            
+            # Создаем тикет
+            await create_ticket_channel(interaction, "youtube", self.title_input.value, full_description)
+            
+        except Exception as e:
+            print(f"Ошибка в YouTube модальном окне: {e}")
+            traceback.print_exc()
+            
+            try:
+                await interaction.response.send_message(
+                    f"{Emojis.CROSS} Произошла ошибка при создании тикета. Попробуйте еще раз.",
+                    ephemeral=True
+                )
+            except:
+                try:
+                    await interaction.followup.send(
+                        f"{Emojis.CROSS} Произошла ошибка при создании тикета. Попробуйте еще раз.",
+                        ephemeral=True
+                    )
+                except:
+                    pass
+
+# ==================== МОДАЛЬНОЕ ОКНО ДЛЯ ПРОБЛЕМЫ И ИДЕИ ====================
 class TicketModal(Modal):
     def __init__(self, ticket_type):
         # Устанавливаем красивое название
@@ -144,20 +267,14 @@ class TicketModal(Modal):
             title_placeholder = "Кратко опишите проблему..."
             description_placeholder = "• Что именно произошло?\n• Когда началось?\n• Как это влияет на игру?\n• Прикрепите скриншоты если есть"
             description_label = "📖 ПОДРОБНОЕ ОПИСАНИЕ"
-        elif ticket_type == "idea":
+        else:  # idea
             title_text = f"{Emojis.IDEA} СОЗДАНИЕ ИДЕИ"
             color = Colors.IDEA
             title_placeholder = "Название идеи..."
             description_placeholder = "• В чем суть идеи?\n• Какую проблему решает?\n• Какие преимущества?\n• Возможная реализация"
             description_label = "📖 ОПИСАНИЕ ИДЕИ"
-        else:  # youtube
-            title_text = f"{Emojis.YOUTUBE} ЗАПРОС ДЛЯ YOUTUBE"
-            color = Colors.YOUTUBE
-            title_placeholder = "Тема видео или коллаборации..."
-            description_placeholder = "📺 Информация о канале:\n• Ссылка на YouTube канал\n• Количество подписчиков\n• Основная тематика\n\n🎮 Информация об игре:\n• Ваш ник в игре\n• Уровень/ранг\n• Часов в игре\n\n🤝 Предложение:\n• Тип сотрудничества\n• Идея для видео\n• Контакт для связи"
-            description_label = "📋 ПОДРОБНАЯ ИНФОРМАЦИЯ"
         
-        super().__init__(title=title_text, timeout=None)  # Убрали таймаут
+        super().__init__(title=title_text, timeout=None)
         
         # Поле названия
         self.title_input = TextInput(
@@ -238,6 +355,7 @@ class MainPanelView(View):
     @discord.ui.button(label=f"{Emojis.PROBLEM} ПРОБЛЕМА", style=discord.ButtonStyle.red, custom_id="ticket_problem", row=0)
     async def problem_button(self, interaction: discord.Interaction, button: Button):
         try:
+            print(f"Нажата кнопка ПРОБЛЕМА пользователем {interaction.user}")
             modal = TicketModal("problem")
             await interaction.response.send_modal(modal)
         except Exception as e:
@@ -250,6 +368,7 @@ class MainPanelView(View):
     @discord.ui.button(label=f"{Emojis.IDEA} ИДЕЯ", style=discord.ButtonStyle.green, custom_id="ticket_idea", row=0)
     async def idea_button(self, interaction: discord.Interaction, button: Button):
         try:
+            print(f"Нажата кнопка ИДЕЯ пользователем {interaction.user}")
             modal = TicketModal("idea")
             await interaction.response.send_modal(modal)
         except Exception as e:
@@ -262,12 +381,14 @@ class MainPanelView(View):
     @discord.ui.button(label=f"{Emojis.YOUTUBE} YOUTUBE", style=discord.ButtonStyle.red, custom_id="ticket_youtube", row=1)
     async def youtube_button(self, interaction: discord.Interaction, button: Button):
         try:
-            modal = TicketModal("youtube")
+            print(f"Нажата кнопка YOUTUBE пользователем {interaction.user}")
+            modal = YouTubeModal()
             await interaction.response.send_modal(modal)
         except Exception as e:
             print(f"Ошибка в кнопке YouTube: {e}")
+            traceback.print_exc()
             await interaction.response.send_message(
-                f"{Emojis.CROSS} Ошибка открытия формы. Попробуйте снова.",
+                f"{Emojis.CROSS} Ошибка открытия формы YouTube. Попробуйте снова.",
                 ephemeral=True
             )
 
@@ -728,6 +849,7 @@ async def on_ready():
         bot.add_view(MainPanelView())
         bot.add_view(UserTicketView(0, 0))
         bot.add_view(StaffTicketView(0, 0, True))
+        print("✅ View зарегистрированы")
     except Exception as e:
         print(f"Ошибка регистрации View: {e}")
     
@@ -738,8 +860,8 @@ async def on_interaction(interaction: discord.Interaction):
     """Обработчик всех взаимодействий"""
     try:
         if interaction.type == discord.InteractionType.component:
-            # Логируем нажатие кнопок
-            print(f"Кнопка нажата: {interaction.data.get('custom_id', 'unknown')} пользователем {interaction.user}")
+            custom_id = interaction.data.get('custom_id', 'unknown')
+            print(f"🔘 Кнопка нажата: {custom_id} пользователем {interaction.user.name}")
     except Exception as e:
         print(f"Ошибка в обработчике взаимодействия: {e}")
     
@@ -982,6 +1104,12 @@ async def cleanup(ctx):
         color=Colors.SUCCESS
     )
     await ctx.send(embed=embed)
+
+@bot.command(name="тест")
+async def test_youtube(ctx):
+    """Тест кнопки YouTube"""
+    view = MainPanelView()
+    await ctx.send("Тест кнопки YouTube:", view=view)
 
 # ==================== ЗАПУСК БОТА ====================
 if __name__ == "__main__":
