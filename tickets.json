@@ -1,1 +1,36 @@
-
+{
+  "987654321123456789": {
+    "creator": "123456789012345678",
+    "type": "youtube",
+    "title": "Запрос на сотрудничество",
+    "description": "Полное описание заявки...",
+    "created_at": 1735642800,
+    "status": "review",
+    "channel_name": "youtube-alex-запрос",
+    "suggestions": [
+      {
+        "type": "info",
+        "text": "Дополнительная информация от автора",
+        "author": "123456789012345678",
+        "author_name": "Username",
+        "timestamp": 1735642900,
+        "suggestion_id": "1735642900000"
+      }
+    ],
+    "last_edited": 1735642950,
+    "edited_by": "123456789012345678",
+    "status_changed": 1735643000,
+    "status_changed_by": "234567890123456789",
+    "youtube_data": {
+      "name": "Алексей",
+      "age": "25",
+      "channel_link": "https://youtube.com/@channel",
+      "nickname": "GamerPro",
+      "video_type": "Обзоры игр",
+      "subscribers": "10K",
+      "telegram": "@username",
+      "timezone": "МСК",
+      "additional_info": "Дополнительные детали"
+    }
+  }
+}
