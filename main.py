@@ -25,7 +25,7 @@ def load_data(filename):
     try:
         with open(filename, 'r', encoding='utf-8') as f:
             return json.load(f)
-    except:
+    except (FileNotFoundError, json.JSONDecodeError):
         return {}
 
 def save_data(filename, data):
@@ -535,16 +535,27 @@ class StaffTicketView(View):
         self.creator_id = creator_id
         self.is_open = is_open
         
-        # Настройка кнопки открыть/закрыть
+        # Создаем кнопки динамически
+        self.add_user_button = Button(label=f"{Emojis.ADD_USER} ДОБАВИТЬ", style=discord.ButtonStyle.blurple, custom_id="staff_add", row=0)
+        self.request_button = Button(label=f"{Emojis.QUESTION} ЗАПРОСИТЬ", style=discord.ButtonStyle.gray, custom_id="staff_request", row=0)
+        
+        # Кнопка закрытия/открытия
         if is_open:
-            self.close_button.label = f"{Emojis.LOCK} ЗАКРЫТЬ"
-            self.close_button.style = discord.ButtonStyle.red
+            self.close_button = Button(label=f"{Emojis.LOCK} ЗАКРЫТЬ", style=discord.ButtonStyle.red, custom_id="close_ticket", row=1)
         else:
-            self.close_button.label = f"{Emojis.UNLOCK} ОТКРЫТЬ"
-            self.close_button.style = discord.ButtonStyle.green
+            self.close_button = Button(label=f"{Emojis.UNLOCK} ОТКРЫТЬ", style=discord.ButtonStyle.green, custom_id="close_ticket", row=1)
+        
+        # Добавляем обработчики
+        self.add_user_button.callback = self.add_user_callback
+        self.request_button.callback = self.request_callback
+        self.close_button.callback = self.close_callback
+        
+        # Добавляем кнопки в View
+        self.add_item(self.add_user_button)
+        self.add_item(self.request_button)
+        self.add_item(self.close_button)
     
-    @discord.ui.button(label=f"{Emojis.ADD_USER} ДОБАВИТЬ", style=discord.ButtonStyle.blurple, custom_id="staff_add", row=0)
-    async def add_user(self, interaction: discord.Interaction, button: Button):
+    async def add_user_callback(self, interaction: discord.Interaction):
         try:
             if not (has_ticket_role(interaction.user) or is_admin(interaction.user)):
                 embed = discord.Embed(
@@ -574,8 +585,7 @@ class StaffTicketView(View):
                 ephemeral=True
             )
     
-    @discord.ui.button(label=f"{Emojis.QUESTION} ЗАПРОСИТЬ", style=discord.ButtonStyle.gray, custom_id="staff_request", row=0)
-    async def request_info(self, interaction: discord.Interaction, button: Button):
+    async def request_callback(self, interaction: discord.Interaction):
         try:
             if not (has_ticket_role(interaction.user) or is_admin(interaction.user)):
                 embed = discord.Embed(
@@ -606,8 +616,7 @@ class StaffTicketView(View):
                 ephemeral=True
             )
     
-    @discord.ui.button(label="", style=discord.ButtonStyle.red, custom_id="close_ticket", row=1)
-    async def close_button(self, interaction: discord.Interaction, button: Button):
+    async def close_callback(self, interaction: discord.Interaction):
         try:
             if not (has_ticket_role(interaction.user) or is_admin(interaction.user)):
                 embed = discord.Embed(
